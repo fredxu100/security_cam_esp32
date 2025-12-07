@@ -32,6 +32,5 @@ void setup() {
 }
 
 void loop() {
-  // Nothing to do in the loop for a one-time scan
-  delay(5000); 
+  // Nothing to do in the loop for a one-time scan 
 }

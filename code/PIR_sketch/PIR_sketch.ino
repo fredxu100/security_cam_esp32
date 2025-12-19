@@ -1,4 +1,4 @@
-const int pirSensorPin = 41;   // Input pin for the PIR sensor (connect PIR OUT here)
+const int pirSensorPin = 12;   // Input pin for the PIR sensor (connect PIR OUT here)
 const int ledPin = 1;        // Output pin for the LED (onboard LED or external LED w/resistor)
 
 // Variable to store the state of the PIR sensor

@@ -1,28 +1,31 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include "board_config.h"
+#include "Arduino.h"
+#include "FS.h"                // SD Card ESP32
+#include "SD_MMC.h"            // SD Card ESP32
+#include "soc/soc.h"           // Disable brownout problems
+#include "soc/rtc_cntl_reg.h"  // Disable brownout problems
+#include "driver/rtc_io.h"
 
-// Enter your WiFi credentials 
+// WiFi credentials 
 const char *ssid = "Fred_iPhone";
 const char *password = "ghjf0789";
 
-void startCameraServer();
-void setupLedFlash();
-
 #define PIR_INPUT 12
-#define OUT_PIN 13
-bool isStreaming = false;
-//bool isStreaming = false;
+#define BUZZER_PIN 13
+
+// Photo numbering
+int pictureCount = 0;
 
 void setup() {
-
-  pinMode(PIR_INPUT, INPUT_PULLDOWN);
-  pinMode(OUT_PIN, OUTPUT);
-
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
+  
   Serial.begin(115200);
-  Serial.setDebugOutput(true);
-  Serial.println();
+  pinMode(PIR_INPUT, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
+  //Camera pin config
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -43,70 +46,77 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
+  
+  if(psramFound()){
+    config.frame_size = FRAMESIZE_UXGA;
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
+  } else {
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
+  }
 
-  config.jpeg_quality = 10;
-  config.fb_count = 2;
-  config.grab_mode = CAMERA_GRAB_LATEST;
-
-  // camera init
+  //Camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
+    Serial.printf("Camera init failed: 0x%x", err);
     return;
   }
 
-  sensor_t *s = esp_camera_sensor_get();
-  // initial sensors are flipped vertically and colors are a bit saturated
-  if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);        // flip it back
-    s->set_brightness(s, 1);   // up the brightness just a bit
-    s->set_saturation(s, -2);  // lower the saturation
-  }
-  
-  // drop down frame size for higher initial frame rate
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
+  //Sd card init
+  if(!SD_MMC.begin()){
+    Serial.println("SD Card Mount Failed");
   }
 
-
-// Setup LED FLash if LED pin is defined in camera_pins.h
-#if defined(LED_GPIO_NUM)
-  setupLedFlash();
-#endif
-
+  //Wifi init
   WiFi.begin(ssid, password);
-  WiFi.setSleep(false);
-
-  Serial.print("WiFi connecting");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
+  Serial.println("\nWiFi Connected");
+}
 
-  startCameraServer();
+void savePhoto() {
+  //checks for camera capture
+  camera_fb_t * fb = NULL;
+  fb = esp_camera_fb_get();  
+  if(!fb) {
+    Serial.println("Camera capture failed");
+    return;
+  }
 
-  Serial.print("Camera Ready! Use 'http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("' to connect");
+  // Path where new picture will be saved in SD Card
+  String path = "/picture" + String(pictureCount++) + ".jpg";
+
+  fs::FS &fs = SD_MMC; 
+  File file = fs.open(path.c_str(), FILE_WRITE);
+
+  if(!file){
+    Serial.println("Failed to open file in writing mode");
+  } else {
+    file.write(fb->buf, fb->len); // payload (image), payload length
+    Serial.printf("Saved file to path: %s\n", path.c_str());
+  }
+  file.close();
+  esp_camera_fb_return(fb); 
 }
 
 void loop() {
-
-  if(digitalRead(PIR_INPUT) == HIGH)
-  {
-      digitalWrite(OUT_PIN, HIGH);
-      Serial.print("Motion detected!\n");
-  }
-  else
-  {
-    digitalWrite(OUT_PIN, LOW);
+  if(digitalRead(PIR_INPUT) == HIGH) {
+    Serial.println("Motion detected!");
+    
+    // Trigger Buzzer (Tone: 2000Hz)
+    tone(BUZZER_PIN, 2000); 
+    
+    // Save Photo to SD
+    savePhoto();
+    delay(1000);
+    noTone(BUZZER_PIN);
+    
+    // Cool down to prevent duplicate saves from one motion
+    delay(5000); 
   }
 }
